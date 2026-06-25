@@ -1,6 +1,6 @@
 # Forecast-Driven Inventory Optimization
 
-A supply chain analytics project that connects **demand forecasting** with **inventory policy decisions**. Using retail sales data from Favorita stores (Ecuador), the project forecasts weekly product-family demand and translates those forecasts into concrete replenishment parameters: safety stock, reorder point, and economic order quantity.
+A supply chain analytics project that connects **demand forecasting** with **inventory policy decisions**. Using retail sales data from Favorita stores (Ecuador), the project forecasts weekly product-family demand, compares forecasting models, and translates the forecasts into concrete replenishment parameters: safety stock, reorder point, and economic order quantity.
 
 The project is built around a practical planning question:
 
@@ -26,32 +26,35 @@ Dataset: https://www.kaggle.com/competitions/store-sales-time-series-forecasting
 
 ## Approach
 
-Three notebooks, one stage each:
+Four notebooks:
 
 | Notebook | Stage | What it does |
 |---|---|---|
 | `01_data_preparation` | Data prep | Load 3M+ rows, filter product families, aggregate daily store-level sales into clean weekly demand |
-| `02_forecasting` | Forecasting | Holt-Winters exponential smoothing (trend + 52-week seasonality), evaluated on a 12-week hold-out with MAE / RMSE / MAPE / Bias |
+| `02_forecasting` | Forecasting | Holt-Winters baseline (trend + 52-week seasonality), evaluated with MAE / RMSE / MAPE / Bias |
 | `03_inventory_optimization` | Inventory policy | Convert forecast-error uncertainty into safety stock, reorder point, and EOQ |
+| `04_sarima_comparison` | Model selection | Compare Holt-Winters against SARIMA (auto-tuned with `auto_arima`) across both families |
 
-The forecasting and inventory logic are wrapped in reusable functions, so any product family can be evaluated with a single call.
+Forecasting and inventory logic are wrapped in reusable functions, so any product family can be evaluated with a single call.
 
 ---
 
 ## Key results
 
-### Forecast accuracy (12-week hold-out)
+### Model comparison (12-week hold-out)
 
-| Family | Avg weekly demand | MAPE | Bias |
-|---|---:|---:|---:|
-| GROCERY I | ~1,423,000 | **5.52%** | +24,143 |
-| BEVERAGES | ~899,000 | **11.25%** | +136,368 |
+| Family | Model | MAPE | Bias |
+|---|---|---:|---:|
+| BEVERAGES | Holt-Winters | 11.25% | +136,368 |
+| BEVERAGES | **SARIMA** | **6.17%** | −77,941 |
+| GROCERY I | Holt-Winters | 5.52% | +24,143 |
+| GROCERY I | **SARIMA** | **4.01%** | +10,442 |
 
-GROCERY I is markedly easier to forecast — staple groceries have stable, repeatable weekly demand, whereas beverages are more seasonal and volatile.
+SARIMA (parameters auto-tuned via `auto_arima`) outperformed the Holt-Winters baseline on both families, improving accuracy and reducing bias.
 
-A data-quality issue was identified and fixed during analysis: the final week of the dataset was truncated (incomplete 7-day week), which initially inflated BEVERAGES MAPE to 30.6%. Removing it improved accuracy to 11.25%.
+**Key insight — match model complexity to demand difficulty.** The volatile family (BEVERAGES) benefited most from the more complex model (MAPE 11.25% → 6.17%), while the stable, predictable family (GROCERY I) improved only marginally (5.52% → 4.01%) — the simpler model was already nearly sufficient. In practice, model complexity should be matched to how hard each item is to forecast, rather than applied uniformly.
 
-Both models showed a **positive bias** (over-forecasting). For BEVERAGES the bias accounts for most of the total error, signalling a systematic over-prediction that would inflate inventory if left uncorrected.
+A data-quality issue was also identified and fixed during analysis: the final week of the dataset was truncated, which initially inflated BEVERAGES MAPE to 30.6%.
 
 ### Inventory policy (continuous review, 95% service level, 1-week lead time)
 
@@ -60,15 +63,16 @@ Both models showed a **positive bias** (over-forecasting). For BEVERAGES the bia
 | BEVERAGES | ~184,900 | ~1,083,700 | ~176,500 | ~20.6% |
 | GROCERY I | ~196,700 | ~1,620,000 | ~222,100 | ~13.8% |
 
-**Core insight:** despite selling ~60% more, GROCERY I needs a *proportionally lighter* safety buffer. Because its demand is more predictable, its forecast error is smaller, so less buffer stock is required. **Better forecast accuracy translates directly into lower safety stock — and therefore less working capital tied up in inventory.** Forecast quality is a financial lever, not just a technical metric.
+**Core insight:** despite selling ~60% more, GROCERY I needs a *proportionally lighter* safety buffer. Because its demand is more predictable, its forecast error is smaller, so less buffer stock is required. **Better forecast accuracy translates directly into lower safety stock — and therefore less working capital tied up in inventory.**
 
 ---
 
 ## Methodology notes
 
-- **Forecast-error-based safety stock.** Safety stock is sized from the standard deviation of *forecast error* (not raw demand), using `z · sigma · sqrt(lead time)`. This ties the buffer directly to forecast reliability.
-- **Chronological train/test split.** The series is never shuffled — the model learns from the past and is tested on the most recent 12 weeks, mirroring real forecasting.
-- **Stated assumptions.** Ordering cost, holding cost (15%/year), and lead time (1 week) are not in the dataset, so they are set as documented assumptions following standard retail planning conventions.
+- **Model selection by measurement.** Two forecasting approaches were tested and compared on a common hold-out, rather than committing to one model upfront.
+- **Forecast-error-based safety stock.** Safety stock is sized from the standard deviation of *forecast error* (not raw demand), using `z · sigma · sqrt(lead time)`.
+- **Chronological train/test split.** The series is never shuffled — the model learns from the past and is tested on the most recent 12 weeks.
+- **Stated assumptions.** Ordering cost, holding cost (15%/year), and lead time (1 week) are documented assumptions following standard retail planning conventions.
 
 ---
 
@@ -78,11 +82,12 @@ Both models showed a **positive bias** (over-forecasting). For BEVERAGES the bia
 inventory-optimization/
 ├── data/
 │   ├── raw/          # train.csv (download from Kaggle — not committed)
-│   └── processed/    # weekly demand, forecasts, inventory policy
+│   └── processed/    # weekly demand, forecasts, inventory policy, model comparison
 ├── notebooks/
 │   ├── 01_data_preparation.ipynb
 │   ├── 02_forecasting.ipynb
-│   └── 03_inventory_optimization.ipynb
+│   ├── 03_inventory_optimization.ipynb
+│   └── 04_sarima_comparison.ipynb
 ├── visuals/          # exported charts
 ├── requirements.txt
 └── README.md
@@ -96,13 +101,13 @@ inventory-optimization/
 pip install -r requirements.txt
 ```
 
-Download `train.csv` from the Kaggle link above into `data/raw/`, then run the notebooks in order (01 → 02 → 03).
+Download `train.csv` from the Kaggle link above into `data/raw/`, then run the notebooks in order (01 → 02 → 03 → 04).
 
 ---
 
 ## Possible extensions
 
-- Add SARIMAX / XGBoost to capture short-term demand variation Holt-Winters misses
+- Add XGBoost with calendar/holiday feature engineering
 - Bias correction on the forecast before sizing inventory
 - Monte Carlo simulation to optimize safety stock under stochastic demand
 - Sensitivity analysis on lead time and service level
@@ -111,4 +116,4 @@ Download `train.csv` from the Kaggle link above into `data/raw/`, then run the n
 
 ## Skills demonstrated
 
-Time-series forecasting · demand planning · inventory theory (EOQ, safety stock, reorder point) · forecast error analysis (MAPE, bias) · data cleaning · Python (pandas, statsmodels, scipy) · translating analysis into business decisions
+Time-series forecasting (Holt-Winters, SARIMA) · model selection · demand planning · inventory theory (EOQ, safety stock, reorder point) · forecast error analysis (MAPE, bias) · data cleaning · Python (pandas, statsmodels, pmdarima, scipy) · translating analysis into business decisions
